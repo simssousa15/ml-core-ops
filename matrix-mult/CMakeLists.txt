@@ -4,7 +4,8 @@ project(Matrix_Multiplication C)
 
 # Set C standard and optimization flags
 set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -march=native -mavx2 -mfma")
+# set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -march=native -mavx2 -mfma")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O0")
 
 # Find OpenBLAS
 find_package(BLAS REQUIRED)
