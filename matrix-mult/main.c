@@ -52,11 +52,44 @@ void matmul_blocked(float* A, float* B, float* C) {
                 int j_max = (j0 + BLOCK < N) ? j0 + BLOCK : N;
                 int k_max = (k0 + BLOCK < N) ? k0 + BLOCK : N;
                 
+                for (int i = i0; i < i0+BLOCK; i++) {
+                    for (int k = k0; k < k0+BLOCK; k++) {
+                        float a_ik = A[i*N + k];
+                        for (int j = j0; j < j0+BLOCK; j++) {
+                            C[i*N + j] += a_ik * B[k*N + j];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 3.1. Blocked (tiled) matrix multiplication
+// Surprisingly, this shows consistently faster performanace
+// 9.34GFLOPS -> 10.03GFLOPS 
+void matmul_blocked_unrolled(float* A, float* B, float* C) {
+    memset(C, 0, N*N*sizeof(float));
+    const int BLOCK = BLOCK_SIZE;
+
+    for (int i0 = 0; i0 < N; i0 += BLOCK) {
+        for (int k0 = 0; k0 < N; k0 += BLOCK) {
+            for (int j0 = 0; j0 < N; j0 += BLOCK) {
+                // Process BLOCK×BLOCK sub-matrix
+                int i_max = (i0 + BLOCK < N) ? i0 + BLOCK : N;
+                int j_max = (j0 + BLOCK < N) ? j0 + BLOCK : N;
+                int k_max = (k0 + BLOCK < N) ? k0 + BLOCK : N;
+                
                 for (int i = i0; i < i_max; i++) {
                     for (int k = k0; k < k_max; k++) {
                         float a_ik = A[i*N + k];
-                        for (int j = j0; j < j_max; j++) {
+                        
+                        int j = j0;
+                        for (; j+4 <= j0+BLOCK; j+=4) {
                             C[i*N + j] += a_ik * B[k*N + j];
+                            C[i*N + j+1] += a_ik * B[k*N + j+1];
+                            C[i*N + j+2] += a_ik * B[k*N + j+2];
+                            C[i*N + j+3] += a_ik * B[k*N + j+3];
                         }
                     }
                 }
@@ -101,7 +134,7 @@ void matmul_avx2(float* A, float* B, float* C) {
     }
 }
 
-//4. AVX2 SIMD version with FMA and unrolled loop
+//4.1. AVX2 SIMD version with FMA and unrolled loop
 void matmul_avx2_unrolled(float* A, float* B, float* C) {
     memset(C, 0, N*N*sizeof(float));
     const int BLOCK = 32;
@@ -149,49 +182,61 @@ void matmul_avx2_unrolled(float* A, float* B, float* C) {
     }
 }
 
-//5. AVX2 micro-kernel (4x8 block)
-void matmul_avx2_micro(float* A, float* B, float* C) {
+// 4.2. AVX2 SIMD version with FMA, unrolled loop and accumulators
+// "My guess is the performance caps at around ~8-12 accumulators" - chatgpt
+
+void matmul_avx2_acc(float* A, float* B, float* C) {
     memset(C, 0, N*N*sizeof(float));
-    const int BLOCK_I = 4; // process 4 rows at a time
-    const int BLOCK_J = 8; // 8 columns (AVX2 width)
+    const int BLOCK = 64;  // outer L1/L2 block
+    const int MICRO = 8;   // micro-kernel size
 
-    for (int i0 = 0; i0 < N; i0 += BLOCK_I) {
-        for (int j0 = 0; j0 < N; j0 += BLOCK_J) {
+    for (int i0 = 0; i0 < N; i0 += BLOCK) {
+        for (int j0 = 0; j0 < N; j0 += BLOCK) {
+            for (int k0 = 0; k0 < N; k0 += BLOCK) {
 
-            // initialize C block accumulators
-            __m256 c0 = _mm256_load_ps(&C[(i0+0)*N + j0]);
-            __m256 c1 = _mm256_load_ps(&C[(i0+1)*N + j0]);
-            __m256 c2 = _mm256_load_ps(&C[(i0+2)*N + j0]);
-            __m256 c3 = _mm256_load_ps(&C[(i0+3)*N + j0]);
+                int i_max = (i0 + BLOCK < N) ? i0 + BLOCK : N;
+                int j_max = (j0 + BLOCK < N) ? j0 + BLOCK : N;
+                int k_max = (k0 + BLOCK < N) ? k0 + BLOCK : N;
 
-            for (int k = 0; k < N; k++) {
-                // load 8 elements of B row
-                __m256 b_vec = _mm256_load_ps(&B[k*N + j0]);
+                for (int i = i0; i < i_max; i++) {
+                    for (int k = k0; k+8 <= k_max; k+=8) {
+                        
+                        //new kernel
+                        __m256 c_m[8];
+                        __m256 a_m[8];
 
-                // broadcast 4 A elements
-                __m256 a0 = _mm256_set1_ps(A[(i0+0)*N + k]);
-                __m256 a1 = _mm256_set1_ps(A[(i0+1)*N + k]);
-                __m256 a2 = _mm256_set1_ps(A[(i0+2)*N + k]);
-                __m256 a3 = _mm256_set1_ps(A[(i0+3)*N + k]);
+                        // Load C[i0:i0+8, j0:j0+8] into registers
+                        for (int _ = 0; _ < 8; _++){
+                            c_m[_] = _mm256_load_ps(&C[(i*N + j0 + _*8)]);
+                            a_m[_] = _mm256_set1_ps(A[i*N + k + _]);
+                        }
+                            
 
-                // FMA accumulation
-                c0 = _mm256_fmadd_ps(a0, b_vec, c0);
-                c1 = _mm256_fmadd_ps(a1, b_vec, c1);
-                c2 = _mm256_fmadd_ps(a2, b_vec, c2);
-                c3 = _mm256_fmadd_ps(a3, b_vec, c3);
+                        for (size_t _k = 0; _k < 8; _k++)
+                        {
+                            c_m[0] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 0]), c_m[0]);
+                            c_m[1] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 8]), c_m[1]);
+                            c_m[2] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 16]), c_m[2]);
+                            c_m[3] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 24]), c_m[3]);
+                            c_m[4] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 32]), c_m[4]);
+                            c_m[5] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 40]), c_m[5]);
+                            c_m[6] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 48]), c_m[6]);
+                            c_m[7] = _mm256_fmadd_ps(a_m[_k], _mm256_load_ps(&B[(k+_k)*N + j0 + 56]), c_m[7]);
+                        }
+                        
+
+                        // Store results back
+                        for (int _ = 0; _ < 8; _++)
+                            _mm256_store_ps(&C[(i*N + j0 + _*8)], c_m[_]);
+                    }
+                }
             }
-
-            // store results
-            _mm256_store_ps(&C[(i0+0)*N + j0], c0);
-            _mm256_store_ps(&C[(i0+1)*N + j0], c1);
-            _mm256_store_ps(&C[(i0+2)*N + j0], c2);
-            _mm256_store_ps(&C[(i0+3)*N + j0], c3);
         }
     }
 }
 
 
-double benchmark(void (*func)(float*, float*, float*), float *A, float *B, float *C, float *res, char* name) {
+double benchmark(void (*func)(float*, float*, float*), float *A, float *B, float *C, float *res, char* name, double benchmark) {
     
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -214,7 +259,8 @@ double benchmark(void (*func)(float*, float*, float*), float *A, float *B, float
         }
     }
 
-    printf("[Perf] %-15s %-6.2f GFLOPS | max_err: %.1e\n", name, gflops, max_err);
+    float gflops_percent = benchmark != 0 ? gflops / benchmark * 100.0 : 100.0;
+    printf("[Perf] %-20s %6.2f GFLOPS (%3.0f%%) | max_err: %.1e\n", name, gflops, gflops_percent, max_err);
     return gflops;
 }
 
@@ -298,9 +344,9 @@ int main() {
     openblas_set_num_threads(1);
     openblas_get_num_threads(); // force initialization
 
-    benchmark(matmul_blas, A, B, C, res, "BLAS");
+    double blas = benchmark(matmul_blas, A, B, C, res, "BLAS", 0);
     // benchmark(matmul_naive, A, B, C, res, "NAIVE");
-    benchmark(matmul_reordered, A, B, C, res, "REORDERED");
+    benchmark(matmul_reordered, A, B, C, res, "REORDERED", blas);
 
     // int blocks[] = {16, 24, 32, 40, 48, 56, 64, 96};
     // int length = sizeof(blocks) / sizeof(blocks[0]);
@@ -312,11 +358,14 @@ int main() {
     // BLOCK_SIZE = 48 should be close to optimal
     // N = 5096 -> 0.54GFLOPS(reordered) to 0.61GFLOPS 
     // Around 13% improvement using -O0
+
+
     BLOCK_SIZE = 32;
-    benchmark(matmul_blocked, A, B, C, res, "BLOCKED");
-    benchmark(matmul_avx2, A, B, C, res, "AVX2");
-    benchmark(matmul_avx2_unrolled, A, B, C, res, "AVX2 UNROLLED");
-    // benchmark(matmul_avx2_micro, A, B, C, res, "AVX2 MICRO");
+    benchmark(matmul_blocked, A, B, C, res, "BLOCKED", blas);
+    benchmark(matmul_blocked_unrolled, A, B, C, res, "BLOCKED UNROLLED", blas);
+    benchmark(matmul_avx2, A, B, C, res, "AVX2", blas);
+    benchmark(matmul_avx2_unrolled, A, B, C, res, "AVX2 UNROLLED", blas);
+    benchmark(matmul_avx2_acc, A, B, C, res, "AVX2 ACC", blas);
     
     free(A);free(B);free(C);free(res);
     return 0;
