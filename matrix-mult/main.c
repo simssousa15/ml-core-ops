@@ -2,8 +2,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <cblas.h>
 
 #define N 1024
+
+// 0. Using BLAS library
+// Peak performance reference
+void matmul_blas(float* A, float* B, float* C) {
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+                N, N, N,           // M, N, K dimensions
+                1.0f,              // alpha scalar
+                A, N,              // matrix A, leading dimension
+                B, N,              // matrix B, leading dimension
+                0.0f,              // beta scalar (0 = overwrite C)
+                C, N);             // matrix C, leading dimension
+}
 
 // 1. Naive (ijk order)
 void matmul_naive(float* A, float* B, float* C) {
@@ -51,6 +64,10 @@ double benchmark(void (*func)(float*, float*, float*)) {
 }
 
 int main() {
+
+    printf("[BLAS]\n");
+    benchmark(matmul_blas);
+    
     printf("[Naive]\n");
     benchmark(matmul_naive);
 
