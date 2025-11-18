@@ -54,6 +54,7 @@ void error_check(float* output, float* expected, int size) {
     printf("Max error: %.4f\n", max_err);
 }
 
+// NOTE: Better to move the testing to python for ease of use
 
 int main(){
 
