@@ -1,2 +1,4 @@
 .vscode
 matrix-mult/build
+im2col/pytorch
+im2col/data
