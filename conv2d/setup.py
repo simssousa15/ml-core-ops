@@ -6,7 +6,8 @@ from Cython.Build import cythonize
 ext = Extension(
     name="convlib",
     sources=["convlib_cython.pyx", "convlib.c"],
-    extra_compile_args=["-mavx2", "-mfma"],
+    extra_compile_args=["-mavx2", "-mfma", "-O3"],
+    extra_link_args=["-lopenblas"]
 )
 
 setup(

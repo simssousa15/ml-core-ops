@@ -1,4 +1,6 @@
 #include "convlib.h"
+#include <cblas.h>
+
 // copy pasted methods from previous implementations
 // will find a better solution later
 
@@ -94,38 +96,62 @@ void matmul_avx2_acc(float* A, float* B, float* C, int N) {
     }
 }
 
-void conv2d(const float* input, const float* kernel,
+// -----------------------------------------------------
+// conv2d using im2col + CBLAS sgemm
+// -----------------------------------------------------
+void conv2d(const float* input,
+            const float* kernel,
             float* output,
             int C_in, int H_in, int W_in,
             int C_out,
-            int K_h, int K_w,
-            int stride, int pad) {
-    int H_out = (H_in + 2 * pad - K_h) / stride + 1;
-    int W_out = (W_in + 2 * pad - K_w) / stride + 1;
+            int K_h,  int K_w,
+            int stride, int pad)
+{
+    int H_out = (H_in + 2*pad - K_h) / stride + 1;
+    int W_out = (W_in + 2*pad - K_w) / stride + 1;
 
-    // im2col output
-    float* col = aligned_alloc(64, C_in * K_h * K_w * H_out * W_out * sizeof(float));
-    im2col(input, C_in, H_in, W_in, K_h, K_w, pad, stride, col);
+    int M = C_out;                  // rows of output (out_channels)
+    int K = C_in * K_h * K_w;       // inner dimension
+    int N = H_out * W_out;          // columns per output feature map
 
-    // Reshape kernel to 2D
-    float* kernel_2d = aligned_alloc(64, C_out * C_in * K_h * K_w * sizeof(float));
-    for (int co = 0; co < C_out; ++co) {
-        for (int ci = 0; ci < C_in; ++ci) {
-            for (int kh = 0; kh < K_h; ++kh) {
-                for (int kw = 0; kw < K_w; ++kw) {
-                    int k_index = co * (C_in * K_h * K_w) + ci * (K_h * K_w) + kh * K_w + kw;
-                    kernel_2d[k_index] = kernel[co * (C_in * K_h * K_w) + ci * (K_h * K_w) + kh * K_w + kw];
-                }
-            }
-        }
-    }
+    // Allocate im2col buffer
+    float* col = aligned_alloc(64, K * N * sizeof(float));
 
-    // Matrix multiplication
-    matmul_avx2_acc(kernel_2d, col, output, C_out);
+    // Compute im2col matrix
+    im2col(input, C_in, H_in, W_in,
+           K_h, K_w, pad, stride,
+           col);
+
+    // Use BLAS SGEMM:
+    //
+    // C = A * B
+    //
+    // A = kernel        (M × K)
+    // B = col           (K × N)
+    // C = output        (M × N)
+    //
+    // Row-major call:
+    //
+    // CBLAS_ORDER RowMajor
+    // C = alpha*A*B + beta*C
+
+    cblas_sgemm(
+        CblasRowMajor,
+        CblasNoTrans,     // A not transposed
+        CblasNoTrans,     // B not transposed
+        M,                // rows of A and C
+        N,                // columns of B and C
+        K,                // shared dimension
+        1.0f,
+        kernel, K,        // A pointer, lda = K
+        col,    N,        // B pointer, ldb = N
+        0.0f,
+        output, N         // C pointer, ldc = N
+    );
 
     free(col);
-    free(kernel_2d);
 }
+
 
 int main(){
     return 0;
