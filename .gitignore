@@ -2,3 +2,11 @@
 matrix-mult/build
 im2col/pytorch
 im2col/data
+im2col/main
+
+conv2d/venv
+conv2d/convlib.egg-info
+conv2d/build
+conv2d/__pycache__
+conv2d/*.so
+conv2d/*_cython.c

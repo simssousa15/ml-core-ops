@@ -184,7 +184,6 @@ void matmul_avx2_unrolled(float* A, float* B, float* C) {
 
 // 4.2. AVX2 SIMD version with FMA, unrolled loop and accumulators
 // "My guess is the performance caps at around ~8-12 accumulators" - chatgpt
-
 void matmul_avx2_acc(float* A, float* B, float* C) {
     memset(C, 0, N*N*sizeof(float));
     const int BLOCK = 64;  // outer L1/L2 block
